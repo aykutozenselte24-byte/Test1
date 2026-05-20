@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="utf-8" />
+    <title>AirRadarPro - Tam Entegre Apron Navigasyon</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+    
+    <style>
+        html, body {
+            margin: 0; padding: 0; height: 100%; width: 100%;
+            background-color: #1a1a1a; font-family: Arial, sans-serif;
+        }
+        #map { height: 100%; width: 100%; }
+        
+        /* Üst Canlı GPS Bilgi Çubuğu */
+        #status-box {
+            position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+            z-index: 1000; background: rgba(30, 30, 30, 0.95); color: #fff;
+            padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: bold;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5); pointer-events: none;
+            border: 1px solid #3498db; text-align: center; min-width: 220px;
+        }
+
+        /* Sol Alt Apron Hızlı Odaklanma Menüsü */
+        #apron-menu {
+            position: absolute; bottom: 20px; left: 10px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.95); padding: 10px;
+            border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            max-height: 180px; overflow-y: auto; width: 130px;
+        }
+        .menu-title {
+            font-size: 11px; font-weight: bold; color: #333;
+            margin-bottom: 6px; text-transform: uppercase; border-bottom: 1px solid #ccc;
+            padding-bottom: 3px;
+        }
+        .menu-btn {
+            display: block; width: 100%; background: #34495e; color: white;
+            border: none; padding: 6px; margin-bottom: 4px; border-radius: 4px;
+            font-size: 11px; font-weight: bold; cursor: pointer; text-align: left;
+        }
+        .menu-btn:active { background: #2980b9; }
+
+        /* Rota talimat kutusunun mobil ekranı çok kapatmaması için küçük bir ayar */
+        .leaflet-routing-container {
+            max-width: 240px !important;
+            font-size: 11px !important;
+            background: rgba(255, 255, 255, 0.9) !important;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="status-box">📡 Sistem & GPS Başlatılıyor...</div>
+    
+    <div id="map"></div>
+
+    <div id="apron-menu">
+        <div class="menu-title">Hızlı Odaklan</div>
+        <button class="menu-btn" onclick="focusArea([41.2625, 28.7285], 16)">A İskelesi</button>
+        <button class="menu-btn" onclick="focusArea([41.2605, 28.7245], 16)">B İskelesi</button>
+        <button class="menu-btn" onclick="focusArea([41.2645, 28.7365], 16)">D İskelesi</button>
+        <button class="menu-btn" onclick="focusArea([41.2612, 28.7425], 16)">F İskelesi</button>
+        <button class="menu-btn" onclick="focusArea([41.2585, 28.7465], 16)">G Blok</button>
+        <button class="menu-btn" onclick="focusArea([41.2665, 28.7165], 15)">H Kuzey Açık</button>
+        <button class="menu-btn" onclick="focusArea([41.2725, 28.7445], 15)">Kargo Apronu</button>
+        <button class="menu-btn" onclick="focusArea([41.2515, 28.7185], 15)">Teknik Hangar</button>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+    
+    <script>
+        // 1. Haritayı İstanbul Havalimanı (LTFM) Merkezli Başlat (Gece Modu)
+        var map = L.map('map', { zoomControl: false }).setView([41.2600, 28.7330], 14);
+
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+        // Koyu renkli apron harita katmanı
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            maxZoom: 20,
+            attribution: '© OpenStreetMap & AirRadarPro'
+        }).addTo(map);
+
+        // 2. KROKİ SINIRLARI VE STAND BLOKLARI ENTEGRASYONU
+        // Kırmızı kesikli çizgi ile apron operasyon sahası sınır çizgisi
+        var apronBoundary = L.polygon([
+            [41.2685, 28.7120], [41.2750, 28.7480],
+            [41.2560, 28.7560], [41.2480, 28.7200]
+        ], {
+            color: '#e74c3c', weight: 2, dashArray: '5, 5', fillOpacity: 0.02, pointerEvents: 'none'
+        }).addTo(map);
+
+        // Krokideki Stand Blokları
+        var stands = [
+            { name: "A1-A12 Körük Blok", coords: [41.2628, 28.7280], color: "#2ecc71" },
+            { name: "B1-B17 İskele Blok", coords: [41.2602, 28.7240], color: "#2ecc71" },
+            { name: "C1-C6 Yolcu Blok", coords: [41.2588, 28.7302], color: "#f1c40f" },
+            { name: "D1-D19 Ana İskele", coords: [41.2642, 28.7360], color: "#2ecc71" },
+            { name: "F1-F16 Doğu Blok", coords: [41.2610, 28.7420], color: "#2ecc71" },
+            { name: "G1-G11 Körük Grubu", coords: [41.2580, 28.7460], color: "#2ecc71" },
+            { name: "H Açık Park Pozisyonları", coords: [41.2670, 28.7180], color: "#e67e22" },
+            { name: "S Açık Park Pozisyonları", coords: [41.2530, 28.7350], color: "#e67e22" },
+            { name: "Kargo Stand Alanı (U-V)", coords: [41.2720, 28.7450], color: "#9b59b6" },
+            { name: "M Teknik Hangar Alanı", coords: [41.2510, 28.7190], color: "#95a5a6" }
+        ];
+
+        stands.forEach(function(stand) {
+            L.circle(stand.coords, {
+                radius: 100, color: stand.color, fillColor: stand.color, fillOpacity: 0.2, weight: 1.5
+            }).addTo(map).bindPopup("<b>" + stand.name + "</b><br>Kroki Bölgesi");
+        });
+
+        // 3. NAVİGASYON (ROTA ÇİZİM) MOTORU ENTEGRASYONU
+        // Başlangıçta A İskelesi ve D İskelesi arasında sürüklenebilir bir rota oluşturur
+        var routingControl = L.Routing.control({
+            waypoints: [
+                L.latLng(41.2625, 28.7285), // Başlangıç Noktası (A İskelesi)
+                L.latLng(41.2645, 28.7365)  // Hedef Noktası (D İskelesi)
+            ],
+            routeWhileDragging: true, // Noktalar sürüklendikçe rotayı canlı hesapla
+            language: 'tr',
+            lineOptions: {
+                styles: [{ color: '#3498db', opacity: 0.8, weight: 6 }] // Çizilen rota çizgisinin rengi ve kalınlığı
+            }
+        }).addTo(map);
+
+        // 4. CANLI GPS TAKİP MOTORU
+        var userMarker = null;
+        var accuracyCircle = null;
+        var isFirstLocation = true;
+        var statusBox = document.getElementById('status-box');
+
+        if (navigator.geolocation) {
+            navigator.geolocation.watchPosition(successGPS, errorGPS, {
+                enableHighAccuracy: true,
+                maximumAge: 0,
+                timeout: 10000
+            });
+        } else {
+            statusBox.innerHTML = "❌ Cihazda GPS Donanımı Yok!";
+        }
+
+        function successGPS(position) {
+            var lat = position.coords.latitude;
+            var lng = position.coords.longitude;
+            var accuracy = position.coords.accuracy;
+
+            statusBox.innerHTML = "🟢 Canlı Konum Aktif (Sapma: " + Math.round(accuracy) + "m)";
+
+            // Ekranda mavi canlı takip imlecini oluştur veya güncelle
+            if (!userMarker) {
+                userMarker = L.marker([lat, lng]).addTo(map).bindPopup("Şu anki Konumunuz").openPopup();
+                accuracyCircle = L.circle([lat, lng], {
+                    radius: accuracy, color: '#2ecc71', fillColor: '#2ecc71', fillOpacity: 0.15, weight: 1
+                }).addTo(map);
+            } else {
+                userMarker.setLatLng([lat, lng]);
+                accuracyCircle.setLatLng([lat, lng]);
+                accuracyCircle.setRadius(accuracy);
+            }
+
+            // Sadece İstanbul Havalimanı sınırlarındaysan haritayı otomatik senin üzerine odaklar
+            if (isFirstLocation) {
+                if(lat > 41.24 && lat < 41.28 && lng > 28.70 && lng < 28.76) {
+                    map.setView([lat, lng], 17);
+                    
+                    // İstersen navigasyonun başlangıç noktasını anlık olarak canlı GPS konumuna eşitleyebilirsin:
+                    // routingControl.spliceWaypoints(0, 1, L.latLng(lat, lng));
+                } else {
+                    statusBox.innerHTML = "🟢 GPS Bağlandı (Apron Dışındasınız)";
+                }
+                isFirstLocation = false;
+            } else {
+                if(lat > 41.24 && lat < 41.28 && lng > 28.70 && lng < 28.76) {
+                    map.panTo([lat, lng]);
+                }
+            }
+        }
+
+        function errorGPS(err) {
+            if (err.code === 1) statusBox.innerHTML = "❌ Ayarlardan GPS İzni Verilmeli!";
+            else statusBox.innerHTML = "🔄 GPS sinyali aranıyor / bekleniyor...";
+        }
+
+        // Sol alt menü butonlarına basınca haritayı kaydıran fonksiyon
+        function focusArea(coords, zoomLevel) {
+            map.setView(coords, zoomLevel);
+        }
+    </script>
+</body>
+</html>
